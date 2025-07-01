@@ -45,6 +45,7 @@ export const useConversations = (
   } = useConvexChat(currentChatId ? (currentChatId as Id<'chats'>) : undefined)
 
   const userSettings = useQuery(api.users.getMySettings, isAuthenticated ? {} : 'skip')
+  const disabledModels = useQuery(api.api_keys.getDisabledModels, isAuthenticated ? {} : 'skip') || []
 
   const [cachedConvexChats, setCachedConvexChats] = useState(convexChats)
 
@@ -172,10 +173,7 @@ export const useConversations = (
 
   const activeChats = useMemo(() => {
     // If authenticated, ONLY show chats from Convex.
-    console.log('isAuthenticated', isAuthenticated)
-    console.log('initialChats', initialChats)
     if (isAuthenticated) {
-      console.log('isConvexStreaming', isConvexStreaming)
       const sourceChats = isConvexStreaming ? cachedConvexChats : convexChats
       // Use initialChats as fallback if convex chats haven't loaded yet
       const chatsToUse = sourceChats || initialChats || []
@@ -283,7 +281,17 @@ export const useConversations = (
     setMounted(true)
 
     const lastUsedModelId = localStorage.getItem('lastUsedModelId')
-    const availableModels = isAuthenticated ? models : models.filter((m) => m.isFree)
+    const availableModels = models.filter((m) => {
+      // Check if model is disabled by user
+      if (isAuthenticated && disabledModels.includes(m.id)) {
+        return false
+      }
+      // For unauthenticated users, only show free models
+      if (!isAuthenticated && !m.isFree) {
+        return false
+      }
+      return true
+    })
 
     // Default to the first available model.
     let modelToDisplay = availableModels.length > 0 ? availableModels[0] : models[0]
@@ -296,7 +304,7 @@ export const useConversations = (
       }
     }
     setSelectedModel(modelToDisplay)
-  }, [isAuthenticated])
+  }, [isAuthenticated, disabledModels])
 
   // This new function handles manual model selection, saving the user's preference.
   const handleSetSelectedModel = (model: ModelInfo) => {
@@ -357,7 +365,6 @@ export const useConversations = (
             lastMessageAt: new Date(),
           }
           const newConvId = await db.conversations.add(newConv)
-          console.log('newConvId', newConvId)
           // Use setTimeout to ensure localStorage write completes before navigation
           setTimeout(() => {
             router.push(`/chat/${conversationId}`)

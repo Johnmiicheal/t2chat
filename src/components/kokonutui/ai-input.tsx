@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ModelInfo, models } from '@/lib/models'
+import { getProviderColor, getVendorColor, ModelInfo, models } from '@/lib/models'
 import { useQuery } from 'convex/react'
 import { api } from '../../../convex/_generated/api'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -44,7 +44,7 @@ interface Attachment {
 interface AIInputProps {
   value: string
   onValueChange: (value: string) => void
-  onSend?: (message: string, model: string, options: { webSearch?: boolean }) => void
+  onSend?: (message: string, model: string, options: { webSearch?: boolean; imageGen?: boolean }) => void
   isTyping?: boolean
   onStop?: () => void
   messagesLength: number
@@ -60,31 +60,6 @@ interface AIInputProps {
   mounted?: boolean
   sendBehavior?: 'enter' | 'shiftEnter' | 'button'
   onVoiceChatToggle?: () => void
-}
-
-const getCategoryColor = (category: string) => {
-  switch (category) {
-    case 'google':
-    case 'gemini':
-      return 'from-blue-500 to-purple-500'
-    case 'anthropic':
-    case 'claude':
-      return 'from-purple-500 to-pink-500'
-    case 'openai':
-    case 'gpt':
-      return 'from-green-500 to-teal-500'
-    case 'deepseek':
-      return 'from-cyan-500 to-blue-500'
-    case 'meta':
-    case 'llama':
-      return 'from-indigo-500 to-blue-500'
-    case 'o-series':
-      return 'from-orange-500 to-red-500'
-    case 'openrouter':
-      return 'from-gray-500 to-gray-600'
-    default:
-      return 'from-gray-500 to-gray-600'
-  }
 }
 
 export default function AIInput({
@@ -110,7 +85,8 @@ export default function AIInput({
   const [showModelSelect, setShowModelSelect] = useState(false)
   const [thinkingEnabled, setThinkingEnabled] = useState(true)
   const [webSearchEnabled, setWebSearchEnabled] = useState(false)
-  const [groupBy, setGroupBy] = useState<'provider' | 'category'>('provider')
+  const [imageGenEnabled, setImageGenEnabled] = useState(false)
+  const [groupBy, setGroupBy] = useState<'provider' | 'vendor'>('provider')
   const [isDragOver, setIsDragOver] = useState(false)
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 40,
@@ -123,6 +99,7 @@ export default function AIInput({
   const originalTextRef = useRef('')
 
   const apiKeys = useQuery(api.api_keys.getApiKeys) || []
+  const disabledModels = useQuery(api.api_keys.getDisabledModels) || []
 
   // Check if user has API keys for each provider
   const hasGeminiKey = useQuery(api.api_keys.hasApiKeyForProvider, { provider: 'gemini' }) ?? false
@@ -187,6 +164,11 @@ export default function AIInput({
 
   // Function to check if a model is available to the user
   const isModelAvailable = (model: ModelInfo) => {
+    // Check if model is disabled by user
+    if (disabledModels.includes(model.id)) {
+      return false
+    }
+
     // If user is not signed in, only free models are available
     if (!isSignedIn && !model.isFree) {
       return false
@@ -227,8 +209,13 @@ export default function AIInput({
       setWebSearchEnabled(savedWebSearchEnabled === 'true')
     }
 
+    const savedImageGenEnabled = localStorage.getItem('imageGenEnabled')
+    if (savedImageGenEnabled !== null) {
+      setImageGenEnabled(savedImageGenEnabled === 'true')
+    }
+
     const savedGroupBy = localStorage.getItem('groupBy')
-    if (savedGroupBy === 'provider' || savedGroupBy === 'category') {
+    if (savedGroupBy === 'provider' || savedGroupBy === 'vendor') {
       setGroupBy(savedGroupBy)
     }
   }, [])
@@ -242,6 +229,11 @@ export default function AIInput({
   useEffect(() => {
     localStorage.setItem('webSearchEnabled', webSearchEnabled.toString())
   }, [webSearchEnabled])
+
+  // Save image gen preference
+  useEffect(() => {
+    localStorage.setItem('imageGenEnabled', imageGenEnabled.toString())
+  }, [imageGenEnabled])
 
   // Save groupBy preference
   useEffect(() => {
@@ -313,7 +305,7 @@ export default function AIInput({
 
   const handleSend = () => {
     if (value.trim() && onSend && !isTyping) {
-      onSend(value.trim(), selectedModel.id, { webSearch: webSearchEnabled })
+      onSend(value.trim(), selectedModel.id, { webSearch: webSearchEnabled, imageGen: imageGenEnabled })
       if (messagesLength === 0) {
         setTimeout(() => {
           onValueChange('')
@@ -354,7 +346,7 @@ export default function AIInput({
 
   const groupedModels = models.reduce(
     (acc, model) => {
-      const groupKey = groupBy === 'provider' ? model.provider : model.category
+      const groupKey = groupBy === 'provider' ? model.provider : model.vendor
       if (!acc[groupKey]) {
         acc[groupKey] = []
       }
@@ -372,9 +364,9 @@ export default function AIInput({
         // Sort models within each group
         const sortedModels = groupModels.sort((a, b) => {
           if (groupBy === 'provider') {
-            // When grouped by provider, sort by category first, then by name
-            if (a.category !== b.category) {
-              return a.category.localeCompare(b.category)
+            // When grouped by provider, sort by vendor first, then by name
+            if (a.vendor !== b.vendor) {
+              return a.vendor.localeCompare(b.vendor)
             }
           }
           return a.name.localeCompare(b.name)
@@ -429,7 +421,6 @@ export default function AIInput({
                 >
                   {attachment.type.startsWith('image/') ? (
                     <div className="flex items-center gap-2">
-                      <Image className="w-4 h-4 text-rose-500/70 dark:text-rose-300/70" />
                       {attachment.url && (
                         <img
                           src={attachment.url}
@@ -542,7 +533,7 @@ export default function AIInput({
                     <div
                       className={cn(
                         'w-2 md:w-2.5 h-2 md:h-2.5 rounded-full bg-gradient-to-r',
-                        getCategoryColor(mounted ? selectedModel.category : models[0].category),
+                        getVendorColor(mounted ? selectedModel.vendor : models[0].vendor),
                       )}
                     ></div>
                     <span className="truncate max-w-[80px] md:max-w-[120px]">
@@ -621,11 +612,11 @@ export default function AIInput({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
-                                setGroupBy(groupBy === 'provider' ? 'category' : 'provider')
+                                setGroupBy(groupBy === 'provider' ? 'vendor' : 'provider')
                               }}
                               className="text-xs px-2 py-1 rounded-md bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 hover:bg-rose-200 dark:hover:bg-rose-900/50 transition-colors duration-200 w-16 text-center"
                             >
-                              {groupBy === 'provider' ? 'Provider' : 'Category'}
+                              {groupBy === 'provider' ? 'Provider' : 'Vendor'}
                             </button>
                           </div>
                         </div>
@@ -645,8 +636,8 @@ export default function AIInput({
                               <div
                                 className={cn(
                                   'w-2.5 h-2.5 rounded-full bg-gradient-to-r',
-                                  getCategoryColor(
-                                    groupBy === 'provider' ? groupModels[0]?.category || groupKey : groupKey,
+                                  getVendorColor(
+                                    groupBy === 'provider' ? groupModels[0]?.provider || groupKey : groupKey,
                                   ),
                                 )}
                               ></div>
@@ -658,157 +649,159 @@ export default function AIInput({
                               </span>
                             </div>
                             <div className="space-y-1">
-                              {groupModels.map((model) => (
-                                <button
-                                  key={model.id}
-                                  onClick={() => {
-                                    if (isModelAvailable(model)) {
-                                      setSelectedModel(model)
-                                      setShowModelSelect(false)
+                              {groupModels
+                                .filter((model) => !disabledModels.includes(model.id))
+                                .map((model) => (
+                                  <button
+                                    key={model.id}
+                                    onClick={() => {
+                                      if (isModelAvailable(model)) {
+                                        setSelectedModel(model)
+                                        setShowModelSelect(false)
+                                      }
+                                    }}
+                                    className={cn(
+                                      'group w-full p-1.5 transition-all duration-150 ease-[0.25,1,0.5,1] relative overflow-hidden text-left',
+                                      selectedModel.id === model.id
+                                        ? 'text-rose-600 dark:text-rose-300'
+                                        : 'hover:text-rose-600 dark:hover:text-rose-300 text-black/70 dark:text-white/70',
+                                      !thinkingEnabled && model.supportsThinking && 'opacity-40 cursor-not-allowed',
+                                      !isModelAvailable(model) && 'opacity-40 cursor-not-allowed',
+                                    )}
+                                    disabled={(!thinkingEnabled && model.supportsThinking) || !isModelAvailable(model)}
+                                    title={
+                                      !isModelAvailable(model)
+                                        ? model.isApiKeyOnly
+                                          ? `Requires ${model.provider} API key`
+                                          : !isSignedIn && !model.isFree
+                                            ? 'Sign in required'
+                                            : 'Not available'
+                                        : !thinkingEnabled && model.supportsThinking
+                                          ? 'Enable thinking mode to use this model'
+                                          : undefined
                                     }
-                                  }}
-                                  className={cn(
-                                    'group w-full p-1.5 transition-all duration-150 ease-[0.25,1,0.5,1] relative overflow-hidden text-left',
-                                    selectedModel.id === model.id
-                                      ? 'text-rose-600 dark:text-rose-300'
-                                      : 'hover:text-rose-600 dark:hover:text-rose-300 text-black/70 dark:text-white/70',
-                                    !thinkingEnabled && model.supportsThinking && 'opacity-40 cursor-not-allowed',
-                                    !isModelAvailable(model) && 'opacity-40 cursor-not-allowed',
-                                  )}
-                                  disabled={(!thinkingEnabled && model.supportsThinking) || !isModelAvailable(model)}
-                                  title={
-                                    !isModelAvailable(model)
-                                      ? model.isApiKeyOnly
-                                        ? `Requires ${model.provider} API key`
-                                        : !isSignedIn && !model.isFree
-                                          ? 'Sign in required'
-                                          : 'Not available'
-                                      : !thinkingEnabled && model.supportsThinking
-                                        ? 'Enable thinking mode to use this model'
-                                        : undefined
-                                  }
-                                >
-                                  {/* Premium background for active state */}
-                                  {selectedModel.id === model.id && (
-                                    <>
-                                      {/* Main gradient background with sharp edges */}
-                                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-rose-500/8 dark:via-rose-300/8 to-transparent"></div>
+                                  >
+                                    {/* Premium background for active state */}
+                                    {selectedModel.id === model.id && (
+                                      <>
+                                        {/* Main gradient background with sharp edges */}
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-rose-500/8 dark:via-rose-300/8 to-transparent"></div>
 
-                                      {/* Top shadow lighting */}
-                                      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
+                                        {/* Top shadow lighting */}
+                                        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
 
-                                      {/* Bottom shadow lighting */}
-                                      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
+                                        {/* Bottom shadow lighting */}
+                                        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
 
-                                      {/* Premium inner glow */}
-                                      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 bg-gradient-to-r from-transparent via-rose-500/5 dark:via-rose-300/5 to-transparent blur-sm"></div>
-                                    </>
-                                  )}
+                                        {/* Premium inner glow */}
+                                        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 bg-gradient-to-r from-transparent via-rose-500/5 dark:via-rose-300/5 to-transparent blur-sm"></div>
+                                      </>
+                                    )}
 
-                                  {/* Hover effect for non-active items */}
-                                  {selectedModel.id !== model.id && (
-                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 ease-[0.25,1,0.5,1]">
-                                      {/* Main gradient background with sharp edges */}
-                                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-rose-500/8 dark:via-rose-300/8 to-transparent"></div>
+                                    {/* Hover effect for non-active items */}
+                                    {selectedModel.id !== model.id && (
+                                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 ease-[0.25,1,0.5,1]">
+                                        {/* Main gradient background with sharp edges */}
+                                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-rose-500/8 dark:via-rose-300/8 to-transparent"></div>
 
-                                      {/* Top shadow lighting */}
-                                      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
+                                        {/* Top shadow lighting */}
+                                        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
 
-                                      {/* Bottom shadow lighting */}
-                                      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
+                                        {/* Bottom shadow lighting */}
+                                        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500/30 dark:via-rose-300/30 to-transparent"></div>
 
-                                      {/* Premium inner glow */}
-                                      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 bg-gradient-to-r from-transparent via-rose-500/5 dark:via-rose-300/5 to-transparent blur-sm"></div>
+                                        {/* Premium inner glow */}
+                                        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 bg-gradient-to-r from-transparent via-rose-500/5 dark:via-rose-300/5 to-transparent blur-sm"></div>
+                                      </div>
+                                    )}
+
+                                    <div className="flex items-center justify-between relative z-10">
+                                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                        <span className="text-sm truncate">{model.name}</span>
+                                        {groupBy === 'vendor' && model.provider === 'openrouter' && (
+                                          <span className="text-xs text-rose-500/60 dark:text-rose-300/60 bg-rose-100/50 dark:bg-rose-900/30 px-2 py-0.5 rounded-full">
+                                            OpenRouter
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="flex items-center gap-1">
+                                        {/* Feature icons - ordered: web, vision, imagegen */}
+                                        {model.features.includes('web') && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <Globe className="w-3.5 h-3.5" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Web search enabled</TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        {model.features.includes('vision') && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <Eye className="w-3.5 h-3.5" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Vision capabilities</TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        {model.features.includes('imagegen') && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <Image className="w-3.5 h-3.5" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Image generation enabled</TooltipContent>
+                                          </Tooltip>
+                                        )}
+
+                                        {/* Attachment icons - ordered: image, pdf */}
+                                        {model.attachmentsSuppport.image && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <Paperclip className="w-3.5 h-3.5" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Supports attachments</TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        {model.attachmentsSuppport.pdf && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <FileText className="w-3.5 h-3.5" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Supports PDF attachments</TooltipContent>
+                                          </Tooltip>
+                                        )}
+
+                                        {/* Thinking icon - always rightmost */}
+                                        {model.supportsThinking && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
+                                                <Lightbulb
+                                                  className={cn(
+                                                    'w-3.5 h-3.5',
+                                                    thinkingEnabled && selectedModel.id === model.id
+                                                      ? 'text-rose-500'
+                                                      : 'text-rose-400/60 dark:text-rose-500/60',
+                                                  )}
+                                                />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">Thinking mode enabled</TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                      </div>
                                     </div>
-                                  )}
-
-                                  <div className="flex items-center justify-between relative z-10">
-                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                      <span className="text-sm truncate">{model.name}</span>
-                                      {groupBy === 'category' && model.provider === 'openrouter' && (
-                                        <span className="text-xs text-rose-500/60 dark:text-rose-300/60 bg-rose-100/50 dark:bg-rose-900/30 px-2 py-0.5 rounded-full">
-                                          OpenRouter
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <div className="flex items-center gap-1">
-                                      {/* Feature icons - ordered: web, vision, imagegen */}
-                                      {model.features.includes('web') && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <Globe className="w-3.5 h-3.5" />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Web search enabled</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      {model.features.includes('vision') && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <Eye className="w-3.5 h-3.5" />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Vision capabilities</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      {model.features.includes('imagegen') && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <Image className="w-3.5 h-3.5" />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Image generation enabled</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      
-                                      {/* Attachment icons - ordered: image, pdf */}
-                                      {model.attachmentsSuppport.image && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <Paperclip className="w-3.5 h-3.5" />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Supports image attachments</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      {model.attachmentsSuppport.pdf && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <FileText className="w-3.5 h-3.5" />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Supports PDF attachments</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      
-                                      {/* Thinking icon - always rightmost */}
-                                      {model.supportsThinking && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="text-xs text-rose-500/60 dark:text-rose-300/60 px-1 py-0.5 rounded-full">
-                                              <Lightbulb
-                                                className={cn(
-                                                  'w-3.5 h-3.5',
-                                                  thinkingEnabled && selectedModel.id === model.id
-                                                    ? 'text-rose-500'
-                                                    : 'text-rose-400/60 dark:text-rose-500/60',
-                                                )}
-                                              />
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">Thinking mode enabled</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                    </div>
-                                  </div>
-                                </button>
-                              ))}
+                                  </button>
+                                ))}
                             </div>
                           </div>
                         ))}
@@ -825,11 +818,23 @@ export default function AIInput({
                   type="button"
                   onClick={() => setWebSearchEnabled(!webSearchEnabled)}
                   className={cn(
-                    'p-2 md:p-2.5 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300 transition-all duration-200 rounded-lg bg-white/50 dark:bg-[oklch(0.22_0.015_25)]/40 hover:bg-rose-500/5 dark:hover:bg-white/5',
+                    'w-7 h-7 md:w-8 md:h-8 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300 transition-all duration-200 rounded-md bg-white/50 dark:bg-[oklch(0.22_0.015_25)]/40 hover:bg-rose-500/5 dark:hover:bg-white/5 flex items-center justify-center',
                     webSearchEnabled && 'bg-rose-500/10 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400',
                   )}
                 >
                   <Globe className="w-3.5 md:w-4 h-3.5 md:h-4" />
+                </button>
+              )}
+              {isSignedIn && selectedModel.features.includes('imagegen') && (
+                <button
+                  type="button"
+                  onClick={() => setImageGenEnabled(!imageGenEnabled)}
+                  className={cn(
+                    'w-7 h-7 md:w-8 md:h-8 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300 transition-all duration-200 rounded-md bg-white/50 dark:bg-[oklch(0.22_0.015_25)]/40 hover:bg-rose-500/5 dark:hover:bg-white/5 flex items-center justify-center',
+                    imageGenEnabled && 'bg-rose-500/10 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400',
+                  )}
+                >
+                  <ImageIcon className="w-3.5 md:w-4 h-3.5 md:h-4" />
                 </button>
               )}
             </div>
@@ -867,7 +872,7 @@ export default function AIInput({
                   disabled={isStreaming}
                   className={cn(
                     'group p-2 md:p-2.5 transition-all duration-300 rounded-full',
-                    'text-rose-500 dark:text-rose-300 shadow-md shadow-rose-500/20 dark:shadow-rose-500/20 scale-100 hover:bg-rose-500/5 dark:hover:bg-rose-300/5'
+                    'text-rose-500 dark:text-rose-300 shadow-md shadow-rose-500/20 dark:shadow-rose-500/20 scale-100 hover:bg-rose-500/5 dark:hover:bg-rose-300/5',
                   )}
                 >
                   <ArrowRight
@@ -878,23 +883,46 @@ export default function AIInput({
                   />
                 </button>
               ) : (
-                <Tooltip>
+                <Tooltip delayDuration={0}>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={onVoiceChatToggle}
-                      disabled={!onVoiceChatToggle}
+                      onClick={(e) => {
+                        if (!onVoiceChatToggle) {
+                          // When disabled, show tooltip on mobile by preventing default action
+                          e.preventDefault()
+                          // Force tooltip to show by triggering pointer events
+                          const event = new PointerEvent('pointerenter', { bubbles: true })
+                          e.currentTarget.dispatchEvent(event)
+                          setTimeout(() => {
+                            const leaveEvent = new PointerEvent('pointerleave', { bubbles: true })
+                            e.currentTarget.dispatchEvent(leaveEvent)
+                          }, 2000)
+                          return
+                        }
+                        onVoiceChatToggle()
+                      }}
+                      onTouchStart={(e) => {
+                        if (!onVoiceChatToggle) {
+                          // Show tooltip on touch for mobile
+                          const event = new PointerEvent('pointerenter', { bubbles: true })
+                          e.currentTarget.dispatchEvent(event)
+                        }
+                      }}
+                      disabled={false}
                       className={cn(
                         'group p-2 md:p-2.5 transition-all duration-300 rounded-full',
                         onVoiceChatToggle
-                          ? 'text-rose-500 dark:text-rose-300 shadow-md shadow-rose-500/20 dark:shadow-rose-500/20 scale-100 hover:bg-rose-500/5 dark:hover:bg-rose-300/5'
-                          : 'text-black/30 dark:text-rose-300/30 scale-95',
+                          ? 'text-rose-500 dark:text-rose-300 shadow-md shadow-rose-500/20 dark:shadow-rose-500/20 scale-100 hover:bg-rose-500/5 dark:hover:bg-rose-300/5 cursor-pointer'
+                          : 'text-black/30 dark:text-rose-300/30 scale-95 cursor-not-allowed',
                       )}
                     >
                       <AudioLines className="w-5 md:w-6 h-5 md:h-6 transition-transform duration-300 group-hover:scale-110" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="top">Start voice chat</TooltipContent>
+                  <TooltipContent side="top">
+                    {onVoiceChatToggle ? 'Start voice chat' : 'Sign in to use voice chat'}
+                  </TooltipContent>
                 </Tooltip>
               )}
             </div>

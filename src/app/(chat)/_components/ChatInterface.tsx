@@ -68,8 +68,6 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
     handleEditKeyDown,
     handleRetryClick,
     handleRetryWithModel,
-    getModelDisplayName,
-    getProviderColor,
 
     // Scroll
     showScrollToBottom,
@@ -150,6 +148,12 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
   ) => {
     if (conversationHistory.length === 0) return
 
+    // Check if user is authenticated before trying to save
+    if (!isAuthenticated) {
+      toast.error('Please sign in to save voice conversations')
+      return
+    }
+
     try {
       // Create a new chat with a title based on the first user message
       const firstUserMessage = conversationHistory.find((msg) => msg.role === 'user')
@@ -215,8 +219,6 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
               onRetryWithModel={handleRetryWithModel}
               onCloseRetryDropdown={() => setRetryDropdownId(null)}
               onBranch={handleBranch}
-              getModelDisplayName={getModelDisplayName}
-              getProviderColor={getProviderColor}
               isSignedIn={isAuthenticated}
             />
           </ChatErrorBoundary>
@@ -244,7 +246,7 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
             isUploading={isUploading}
             mounted={mounted}
             sendBehavior={userSettings?.sendBehavior || 'enter'}
-            onVoiceChatToggle={handleVoiceChatToggle}
+            onVoiceChatToggle={isAuthenticated ? handleVoiceChatToggle : undefined}
             uploadButton={
               selectedModel.attachmentsSuppport.image || selectedModel.attachmentsSuppport.pdf ? (
                 <div className={cn('flex gap-1', attachments.length >= maxFiles && 'opacity-50 pointer-events-none')}>
@@ -294,7 +296,7 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
                     }}
                     appearance={{
                       button:
-                        'w-7 h-7 md:w-8 md:h-8 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300 transition-all duration-200 rounded-lg bg-white/50 dark:bg-[oklch(0.22_0.015_25)]/40 hover:bg-rose-500/5 dark:hover:bg-white/5 flex items-center justify-center',
+                        'w-7 h-7 md:w-8 md:h-8 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300 transition-all duration-200 rounded-lg bg-white/50 dark:bg-[oklch(0.22_0.015_25)]/40 hover:bg-rose-500/5 dark:hover:bg-white/5 flex items-center justify-center max-w-7 max-h-7 md:max-w-8 md:max-h-8',
                       container: 'w-auto h-auto',
                       allowedContent: 'hidden',
                     }}
@@ -304,9 +306,8 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
                           return (
                             <div className="w-3.5 md:w-4 h-3.5 md:h-4 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin" />
                           )
-                        if (ready) return <Paperclip className="w-3.5 md:w-4 h-3.5 md:h-4 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300" />
                         return (
-                          <div className="w-3.5 md:w-4 h-3.5 md:h-4 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin" />
+                          <Paperclip className="w-3.5 md:w-4 h-3.5 md:h-4 text-rose-500/60 dark:text-rose-300/60 hover:text-rose-600 dark:hover:text-rose-300" />
                         )
                       },
                       allowedContent() {
@@ -322,6 +323,7 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
       </div>
 
       {/* Simple Voice Chat */}
+      {/* TODO: feature: voice */}
       <SimpleVoiceChat
         isOpen={isVoiceChatOpen}
         onClose={() => setIsVoiceChatOpen(false)}
@@ -329,7 +331,7 @@ export default function ChatInterface({ chatId, initialMessages }: ChatInterface
         onSendMessage={handleVoiceMessageSend}
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
-        availableModels={models}
+        availableModels={models.filter((model) => !model.isApiKeyOnly)}
       />
     </>
   )

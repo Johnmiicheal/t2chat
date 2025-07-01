@@ -1,17 +1,10 @@
-import {
-  streamText,
-  wrapLanguageModel,
-  extractReasoningMiddleware,
-  smoothStream,
-  createDataStreamResponse,
-  createDataStream,
-} from 'ai'
+import { streamText, wrapLanguageModel, extractReasoningMiddleware, createDataStreamResponse } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { createGroq } from '@ai-sdk/groq'
 
 import { models } from '@/lib/models'
-import basePersonality from '../../../../prompts/base'
+import { basePersonality } from '../../../../prompts/base'
 
 export const maxDuration = 30
 

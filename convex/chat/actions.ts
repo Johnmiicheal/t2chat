@@ -5,7 +5,7 @@ import { Id } from '../_generated/dataModel'
 import { betterAuthComponent } from '../auth'
 import { generateText, CoreMessage } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { generateAIResponse, basePersonality } from './shared'
+import { generateAIResponse } from './shared'
 
 export const retryMessage = action({
   args: {
@@ -195,7 +195,6 @@ export const editMessageAndRegenerate = action({
 })
 
 // ACTIONS - for external API calls
-
 export const sendMessage = action({
   args: {
     chatId: v.id('chats'),
@@ -212,96 +211,102 @@ export const sendMessage = action({
       ),
     ),
     webSearch: v.optional(v.boolean()),
+    imageGen: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { chatId, message, modelId, attachments, webSearch },
+    { chatId, message, modelId, attachments, webSearch, imageGen },
   ): Promise<{
     success: boolean
     userMessageId: Id<'messages'>
     assistantMessageId: Id<'messages'>
   }> => {
-    console.log('Using Node Runtime')
-    return ctx.runAction(api.chat.wa.sendMessage, {
+    // Verify authentication and chat ownership first
+    const userId = await betterAuthComponent.getAuthUserId(ctx)
+    if (!userId) {
+      throw new Error('Authentication required')
+    }
+
+    const chat = await ctx.runQuery(api.chat.queries.getChat, { chatId })
+    if (!chat) {
+      throw new Error('Chat not found or access denied')
+    }
+
+    // Get chat history for context
+    const messages = await ctx.runQuery(api.chat.queries.getChatMessages, { chatId })
+
+    // Add user message to the database
+    const userMessageId: Id<'messages'> = await ctx.runMutation(api.chat.mutations.addMessage, {
       chatId,
-      message,
-      modelId,
+      role: 'user',
+      content: message,
       attachments,
-      webSearch,
     })
 
-    // console.log("Using Convex Runtime")
+    // Convert to AI SDK format
+    const chatMessages: CoreMessage[] = messages
+      .filter((msg: any) => msg.isComplete !== false)
+      .map((msg: any) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      }))
 
-    //   // Verify authentication and chat ownership first
-    //   const userId = await betterAuthComponent.getAuthUserId(ctx);
-    //   if (!userId) {
-    //     throw new Error("Authentication required");
-    //   }
-    //   const chat = await ctx.runQuery(api.chat.queries.getChat, { chatId });
-    //   if (!chat) {
-    //     throw new Error("Chat not found or access denied");
-    //   }
+    // Add the new user message
+    try {
+      // Create assistant message placeholder
+      const assistantMessageId: Id<'messages'> = await ctx.runMutation(api.chat.mutations.addMessage, {
+        chatId,
+        role: 'assistant',
+        content: '',
+        modelId,
+        isComplete: false,
+      })
 
-    //   // Get chat history for context
-    //   const messages = await ctx.runQuery(api.chat.queries.getChatMessages, { chatId });
+      if ((attachments && attachments.length > 0) || imageGen) {
+        console.log('Attachments or Image Gen Found: Using Node Action')
+        return await ctx.runAction(api.chat.node.sendMessage, {
+          chatMessages,
+          modelId,
+          attachments: attachments ?? [],
+          message,
+          assistantMessageId,
+          webSearch,
+          userMessageId,
+          imageGen,
+        })
+      }
 
-    //       // Add user message to the database
-    //   const userMessageId: Id<"messages"> = await ctx.runMutation(api.chat.mutations.addMessage, {
-    //     chatId,
-    //     role: "user",
-    //     content: message,
-    //     attachments
-    //   });
+      chatMessages.push({
+        role: 'user' as const,
+        content: [
+          {
+            type: 'text',
+            text: message,
+          },
+        ],
+      })
 
-    //   // Convert to AI SDK format
-    //   const chatMessages: CoreMessage[] = messages
-    //     .filter((msg: any) => msg.isComplete !== false)
-    //     .map((msg: any) => ({
-    //       role: msg.role as "user" | "assistant",
-    //       content: msg.content,
-    //     }));
+      // Generate the AI response using shared function
+      await generateAIResponse(ctx, chatMessages, modelId, assistantMessageId, webSearch)
 
-    //   // Add the new user message
-    //   chatMessages.push({
-    //     role: "user" as const,
-    //     content: [{
-    //       type: 'text',
-    //       text: message
-    //     }]
-    // })
+      return {
+        success: true,
+        userMessageId,
+        assistantMessageId,
+      }
+    } catch (error) {
+      //console.error('Error in sendMessage action:', error)
 
-    //   try {
-    //     // Create assistant message placeholder
-    //     const assistantMessageId: Id<"messages"> = await ctx.runMutation(api.chat.mutations.addMessage, {
-    //       chatId,
-    //       role: "assistant",
-    //       content: "",
-    //       modelId,
-    //       isComplete: false,
-    //     });
+      // Add error message to chat
+      await ctx.runMutation(api.chat.mutations.addMessage, {
+        chatId,
+        role: 'assistant',
+        content: 'I apologize, but I encountered an error while processing your message. Please try again.',
+        modelId,
+      })
 
-    //     // Generate the AI response
-    //     await generateAIResponse(ctx, chatMessages, modelId, assistantMessageId, webSearch);
-
-    //     return {
-    //       success: true,
-    //       userMessageId,
-    //       assistantMessageId,
-    //     };
-
-    //   } catch (error) {
-    //     console.error('Error in sendMessage action:', error);
-
-    //     // Add error message to chat
-    //     await ctx.runMutation(api.chat.mutations.addMessage, {
-    //       chatId,
-    //       role: "assistant",
-    //       content: "I apologize, but I encountered an error while processing your message. Please try again.",
-    //       modelId,
-    //     });
-
-    //     throw error;
-    //   }
+      throw error
+    }
   },
 })
 
@@ -316,13 +321,7 @@ export const generateTitle = action({
 
     const aiModel = google('gemini-2.0-flash-lite')
 
-    // Fetch user settings to potentially customize title generation
-    const userSettings = await ctx.runQuery(api.users.getMySettings)
-    let titlePrompt = `Based on the following user message, generate a short, concise title for the chat (4-5 words max):\n\nUser: "${messageContent}"\n\nTitle:`
-
-    if (userSettings && userSettings.userName) {
-      titlePrompt = `The user's name is ${userSettings.userName}. Based on their message, generate a short, concise title for the chat (4-5 words max):\n\nUser: "${messageContent}"\n\nTitle:`
-    }
+    let titlePrompt = `Based on the following user message, generate a short, concise title for the chat (4-5 words max) No Markdown Allowed:\n\nUser: "${messageContent}"\n\nTitle:`
 
     const { text } = await generateText({
       model: aiModel,
@@ -332,7 +331,6 @@ export const generateTitle = action({
     let finalTitle = ''
     finalTitle = text
 
-    console.log('Final title:', finalTitle)
     await ctx.runMutation(api.chat.mutations.updateChatTitle, {
       chatId,
       title: finalTitle.replace(/"/g, ''),
